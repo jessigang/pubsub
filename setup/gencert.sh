@@ -18,12 +18,12 @@ do
     CONFIG_FILE="${NGINX_SITES_AVAILABLE}/${CREW_ID}"
 
     echo "Creating Nginx configuration for ${DOMAIN} at ${CONFIG_FILE}..."
-    sudo bash -c "cat > ${CONFIG_FILE}" <<EOL
+    sudo bash -c "cat > ${CONFIG_FILE}" <<'EOL'
 server {
     listen 443 ssl;
-    server_name ${DOMAIN};
-    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    server_name DOMAIN_PLACEHOLDER;
+    ssl_certificate /etc/letsencrypt/live/DOMAIN_PLACEHOLDER/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/DOMAIN_PLACEHOLDER/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
     location / {
@@ -43,6 +43,9 @@ server {
 }
 EOL
 
+    # Replace the placeholder with actual domain
+    sudo sed -i "s/DOMAIN_PLACEHOLDER/${DOMAIN}/g" "${CONFIG_FILE}"
+
     echo "Creating symbolic link for ${CREW_ID}..."
     sudo ln -sf ${CONFIG_FILE} ${NGINX_SITES_ENABLED}/${CREW_ID}
 
@@ -53,4 +56,3 @@ echo "Reloading Nginx..."
 sudo systemctl reload nginx
 
 echo "All configurations and certificates are complete."
-
