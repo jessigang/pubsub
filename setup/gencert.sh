@@ -58,3 +58,4 @@ echo "Reloading Nginx..."
 sudo systemctl reload nginx
 
 echo "All configurations and certificates are complete."
+
