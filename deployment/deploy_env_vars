@@ -1,0 +1,19 @@
+# Application Settings
+application_name=pubsub
+resource_group=tiu-dgga-rg
+location=koreacentral
+
+# Team Settings
+teamid=unicorn
+namespace=unicorn-pubsub-ns
+
+# Container Registry Settings
+registry=unicorncr.azurecr.io
+image_org=telecom
+image_credential=acr-credentials
+
+# Resource Settings
+resources_requests_cpu=250m
+resources_requests_memory=512Mi
+resources_limits_cpu=500m
+resources_limits_memory=1024Mi

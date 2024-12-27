@@ -1,0 +1,187 @@
+def PIPELINE_ID = "pubsub-${env.BUILD_NUMBER}"
+
+def getImageTag() {
+    def dateFormat = new java.text.SimpleDateFormat('yyyyMMddHHmmss')
+    def currentDate = new Date()
+    return dateFormat.format(currentDate)
+}
+
+def checkError(message) {
+    if (currentBuild.result == "FAILURE") {
+        error "Failed: ${message}"
+    }
+}
+
+podTemplate(
+    label: "${PIPELINE_ID}",
+    serviceAccount: 'jenkins',
+    containers: [
+        containerTemplate(name: 'gradle', image: 'gradle:jdk17', ttyEnabled: true, command: 'cat'),
+        containerTemplate(name: 'podman', image: "mgoltzsche/podman", ttyEnabled: true, command: 'cat', privileged: true),
+        containerTemplate(
+            name: 'azure-cli',
+            image: 'hiondal/azure-kubectl:latest',
+            command: 'cat',
+            ttyEnabled: true,
+            envVars: [
+                envVar(key: 'HOME', value: '/home/jenkins')
+            ]
+        ),
+        containerTemplate(name: 'envsubst', image: "hiondal/envsubst", command: 'sleep', args: '1h')
+    ],
+    volumes: [
+        emptyDirVolume(mountPath: '/home/gradle/.gradle', memory: false),
+        emptyDirVolume(mountPath: '/root/.azure', memory: false)
+    ]
+) {
+    node(PIPELINE_ID) {
+        def props
+        def imageTag = getImageTag()
+        def manifest = "deploy.yaml"
+
+        stage("Get Source") {
+            checkout scm
+            props = readProperties file: "deployment/deploy_env_vars"
+        }
+
+        try {
+            stage("Setup AKS") {
+                container('azure-cli') {
+                    withCredentials([azureServicePrincipal('azure-credentials')]) {
+                        sh """
+                            az login --service-principal -u \$AZURE_CLIENT_ID -p \$AZURE_CLIENT_SECRET -t \$AZURE_TENANT_ID
+                            az aks get-credentials --resource-group ${props.resource_group} --name ${props.teamid}-aks --overwrite-existing
+                            kubectl create namespace ${props.namespace} --dry-run=client -o yaml | kubectl apply -f -
+                        """
+                    }
+                }
+                checkError("AKS Setup Failed")
+            }
+
+            stage('Build Applications') {
+                container('gradle') {
+                    sh """
+                        chmod +x gradlew
+                        ./gradlew usage:clean usage:build -x test
+                        ./gradlew alert:clean alert:build -x test
+                    """
+                }
+                checkError("Application Build Failed")
+            }
+
+            stage('Build Container Images') {
+                container('podman') {
+                    def usageImagePath = "${props.registry}/${props.image_org}/usage"
+                    def alertImagePath = "${props.registry}/${props.image_org}/alert"
+
+                    sh """
+                        # Usage Service Image
+                        podman build -f deployment/Dockerfile-usage \
+                            -t ${usageImagePath}:${imageTag} \
+                            -t ${usageImagePath}:latest .
+
+                        # Alert Service Image
+                        podman build -f deployment/Dockerfile-alert \
+                            -t ${alertImagePath}:${imageTag} \
+                            -t ${alertImagePath}:latest .
+                    """
+                }
+                checkError("Container Image Build Failed")
+            }
+
+            stage('Push Container Images') {
+                container('podman') {
+                    def usageImagePath = "${props.registry}/${props.image_org}/usage"
+                    def alertImagePath = "${props.registry}/${props.image_org}/alert"
+
+                    withCredentials([usernamePassword(
+                        credentialsId: "${props.image_credential}",
+                        usernameVariable: 'USERNAME',
+                        passwordVariable: 'PASSWORD'
+                    )]) {
+                        sh """
+                            podman login ${props.registry} --username \$USERNAME --password \$PASSWORD
+
+                            # Push Usage Service Images
+                            podman push ${usageImagePath}:${imageTag}
+                            podman push ${usageImagePath}:latest
+
+                            # Push Alert Service Images
+                            podman push ${alertImagePath}:${imageTag}
+                            podman push ${alertImagePath}:latest
+                        """
+                    }
+                }
+                checkError("Container Image Push Failed")
+            }
+
+            stage('Generate Deployment YAML') {
+                container('envsubst') {
+                    def usageImagePath = "${props.registry}/${props.image_org}/usage:${imageTag}"
+                    def alertImagePath = "${props.registry}/${props.image_org}/alert:${imageTag}"
+
+                    sh """
+                        # Export variables for envsubst
+                        export namespace=${props.namespace}
+                        export usage_image_path=${usageImagePath}
+                        export alert_image_path=${alertImagePath}
+                        export resources_requests_cpu=${props.resources_requests_cpu}
+                        export resources_requests_memory=${props.resources_requests_memory}
+                        export resources_limits_cpu=${props.resources_limits_cpu}
+                        export resources_limits_memory=${props.resources_limits_memory}
+
+                        # Generate deployment file
+                        envsubst < deployment/${manifest}.template > deployment/${manifest}
+                    """
+                }
+                checkError("Deployment YAML Generation Failed")
+            }
+
+            stage('Deploy to AKS') {
+                container('azure-cli') {
+                    sh """
+                        # Deploy application
+                        kubectl apply -f deployment/${manifest}
+
+                        # Wait for application pods to be ready
+                        echo "Waiting for Usage service pods..."
+                        kubectl wait --for=condition=ready pod -l "app=usage" -n ${props.namespace} --timeout=300s
+
+                        echo "Waiting for Alert service pods..."
+                        kubectl wait --for=condition=ready pod -l "app=alert" -n ${props.namespace} --timeout=300s
+                    """
+                }
+                checkError("Deployment to AKS Failed")
+            }
+
+            stage('Verify Deployment') {
+                container('azure-cli') {
+                    sh """
+                        echo "Verifying service endpoints..."
+
+                        # Get service IPs
+                        USAGE_IP=\$(kubectl get svc usage-svc -n ${props.namespace} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+                        ALERT_IP=\$(kubectl get svc alert-svc -n ${props.namespace} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+                        echo "Usage Service IP: \$USAGE_IP"
+                        echo "Alert Service IP: \$ALERT_IP"
+
+                        if [ -z "\$USAGE_IP" ] || [ -z "\$ALERT_IP" ]; then
+                            echo "Error: Service IPs not available"
+                            exit 1
+                        fi
+                    """
+                }
+                checkError("Deployment Verification Failed")
+            }
+
+            currentBuild.result = 'SUCCESS'
+            echo "**** FINISH ALL STAGES : SUCCESS"
+
+        } catch(e) {
+            currentBuild.result = "FAILED"
+            echo "**** ERROR: ${e.getMessage()}"
+            throw e
+        }
+    }
+}

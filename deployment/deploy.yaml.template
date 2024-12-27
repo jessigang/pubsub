@@ -1,49 +1,57 @@
----
 # ConfigMap for usage service
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: usage-config
+  namespace: ${namespace}
 data:
   APP_NAME: "usage-service"
   SERVER_PORT: "8080"
+
 ---
 # Secret for usage service
 apiVersion: v1
 kind: Secret
 metadata:
   name: usage-eventgrid-secret
+  namespace: ${namespace}
 stringData:
-  EVENT_GRID_ENDPOINT: "https://unicorn-topic-pubsub.koreacentral-1.eventgrid.azure.net/api/events"
-  EVENT_GRID_KEY: "14ytVhbuSBF9flniHaaWZnh2MAhb8VUNhMpnjB8JeLMfiplT4SsRJQQJ99ALACNns7RXJ3w3AAABAZEGQu07"
+  EVENT_GRID_ENDPOINT: "https://unicorn-topic-pubsub.koreacentral-1.eventgrid.azure.net/api/events"
+  EVENT_GRID_KEY: "14ytVhbuSBF9flniHaaWZnh2MAhb8VUNhMpnjB8JeLMfiplT4SsRJQQJ99ALACNns7RXJ3w3AAABAZEGQu07"
   EVENT_GRID_TOPIC: "unicorn-topic-pubsub"
+
 ---
 # ConfigMap for alert service
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: alert-config
+  namespace: ${namespace}
 data:
   APP_NAME: "alert-service"
   SERVER_PORT: "80"
   MONGODB_HOST: "mongo-external"
   MONGODB_PORT: "27017"
   MONGODB_DB: "telecomdb"
+
 ---
 # Secret for alert service
 apiVersion: v1
 kind: Secret
 metadata:
   name: alert-secret
+  namespace: ${namespace}
 stringData:
   MONGODB_USER: "root"
   MONGODB_PASSWORD: "Passw0rd"
+
 ---
 # Deployment for usage service
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: usage
+  namespace: ${namespace}
 spec:
   replicas: 1
   selector:
@@ -56,7 +64,7 @@ spec:
     spec:
       containers:
       - name: usage
-        image: unicorncr.azurecr.io/telecom/usage:latest
+        image: ${usage_image_path}
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
@@ -65,12 +73,21 @@ spec:
             name: usage-config
         - secretRef:
             name: usage-eventgrid-secret
+        resources:
+          requests:
+            cpu: ${resources_requests_cpu}
+            memory: ${resources_requests_memory}
+          limits:
+            cpu: ${resources_limits_cpu}
+            memory: ${resources_limits_memory}
+
 ---
 # Service for usage service
 apiVersion: v1
 kind: Service
 metadata:
   name: usage-svc
+  namespace: ${namespace}
 spec:
   type: LoadBalancer
   ports:
@@ -78,12 +95,14 @@ spec:
     targetPort: 8080
   selector:
     app: usage
+
 ---
 # Deployment for alert service
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: alert
+  namespace: ${namespace}
 spec:
   replicas: 1
   selector:
@@ -96,7 +115,7 @@ spec:
     spec:
       containers:
       - name: alert
-        image: unicorncr.azurecr.io/telecom/alert:latest
+        image: ${alert_image_path}
         imagePullPolicy: Always
         ports:
         - containerPort: 80
@@ -105,12 +124,21 @@ spec:
             name: alert-config
         - secretRef:
             name: alert-secret
+        resources:
+          requests:
+            cpu: ${resources_requests_cpu}
+            memory: ${resources_requests_memory}
+          limits:
+            cpu: ${resources_limits_cpu}
+            memory: ${resources_limits_memory}
+
 ---
 # Service for alert service
 apiVersion: v1
 kind: Service
 metadata:
   name: alert-svc
+  namespace: ${namespace}
 spec:
   type: LoadBalancer
   ports:
