@@ -1,0 +1,135 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  # Application Settings
+  APPLICATION_NAME: pubsub
+  RESOURCE_GROUP: tiu-dgga-rg
+  LOCATION: koreacentral
+
+  # Team Settings
+  TEAMID: unicorn
+  NAMESPACE: unicorn-pubsub-ns
+
+  # Container Registry Settings
+  REGISTRY: unicorncr.azurecr.io
+  IMAGE_ORG: telecom
+
+  # Resource Settings
+  RESOURCES_REQUESTS_CPU: 250m
+  RESOURCES_REQUESTS_MEMORY: 512Mi
+  RESOURCES_LIMITS_CPU: 500m
+  RESOURCES_LIMITS_MEMORY: 1024Mi
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
+
+      - name: Generate Image Tag
+        id: tag
+        run: |
+          echo "TAG=$(date +'%Y%m%d%H%M%S')" >> $GITHUB_ENV
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build Usage Service
+        run: ./gradlew usage:clean usage:build -x test
+
+      - name: Build Alert Service
+        run: ./gradlew alert:clean alert:build -x test
+
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to ACR
+        run: |
+          az acr login --name ${{ env.TEAMID }}cr
+
+      - name: Build and Push Usage Service Image
+        run: |
+          docker build -f deployment/Dockerfile-usage \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:${{ env.TAG }} \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:latest .
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:${{ env.TAG }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:latest
+
+      - name: Build and Push Alert Service Image
+        run: |
+          docker build -f deployment/Dockerfile-alert \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:${{ env.TAG }} \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:latest .
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:${{ env.TAG }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:latest
+
+      - name: Set up kubectl
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ env.RESOURCE_GROUP }}
+          cluster-name: ${{ env.TEAMID }}-aks
+
+      - name: Create namespace if not exists
+        run: |
+          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Generate deployment manifest
+        run: |
+          # Export variables for envsubst
+          export namespace=${{ env.NAMESPACE }}
+          export usage_image_path=${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:${{ env.TAG }}
+          export alert_image_path=${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:${{ env.TAG }}
+          export resources_requests_cpu=${{ env.RESOURCES_REQUESTS_CPU }}
+          export resources_requests_memory=${{ env.RESOURCES_REQUESTS_MEMORY }}
+          export resources_limits_cpu=${{ env.RESOURCES_LIMITS_CPU }}
+          export resources_limits_memory=${{ env.RESOURCES_LIMITS_MEMORY }}
+          
+          # Install envsubst
+          sudo apt-get update && sudo apt-get install -y gettext-base
+          
+          # Generate deployment file
+          envsubst < deployment/deploy.yaml.template > deployment/deploy.yaml
+
+      - name: Deploy to AKS
+        run: |
+          kubectl apply -f deployment/deploy.yaml
+          
+          echo "Waiting for Usage service pods..."
+          kubectl wait --for=condition=ready pod -l "app=usage" -n ${{ env.NAMESPACE }} --timeout=300s
+          
+          echo "Waiting for Alert service pods..."
+          kubectl wait --for=condition=ready pod -l "app=alert" -n ${{ env.NAMESPACE }} --timeout=300s
+
+      - name: Verify Deployment
+        run: |
+          echo "Verifying service endpoints..."
+          
+          # Get service IPs
+          USAGE_IP=$(kubectl get svc usage-svc -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          ALERT_IP=$(kubectl get svc alert-svc -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          
+          echo "Usage Service IP: $USAGE_IP"
+          echo "Alert Service IP: $ALERT_IP"
+          
+          if [ -z "$USAGE_IP" ] || [ -z "$ALERT_IP" ]; then
+            echo "Error: Service IPs not available"
+            exit 1
+          fi
