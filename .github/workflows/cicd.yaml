@@ -61,6 +61,8 @@ jobs:
     name: Build and Push Images
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.timestamp.outputs.value }}
 
     steps:
       - uses: actions/checkout@v4
@@ -82,7 +84,7 @@ jobs:
 
       - name: Get current timestamp
         id: timestamp
-        run: echo "::set-output name=value::$(date +'%Y%m%d%H%M%S')"
+        run: echo "value=$(date +'%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
 
       - name: Build and push Alert image
         uses: docker/build-push-action@v5
@@ -128,12 +130,22 @@ jobs:
           kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Generate deployment manifest
+        env:
+          IMAGE_TAG: ${{ needs.release.outputs.image_tag }}
         run: |
-          export usage_image_path="${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:${{ steps.timestamp.outputs.value }}"
-          export alert_image_path="${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:${{ steps.timestamp.outputs.value }}"
+          # Export variables for envsubst
+          export namespace=${{ env.NAMESPACE }}
+          export usage_image_path="${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:${IMAGE_TAG}"
+          export alert_image_path="${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:${IMAGE_TAG}"
+          export resources_requests_cpu=${{ env.RESOURCES_REQUESTS_CPU }}
+          export resources_requests_memory=${{ env.RESOURCES_REQUESTS_MEMORY }}
+          export resources_limits_cpu=${{ env.RESOURCES_LIMITS_CPU }}
+          export resources_limits_memory=${{ env.RESOURCES_LIMITS_MEMORY }}
           
           # Generate deployment file from template
           envsubst < deployment/deploy.yaml.template > deployment/deploy.yaml
+          
+          # Debug: Print the generated manifest
           cat deployment/deploy.yaml
 
       - name: Deploy to AKS
