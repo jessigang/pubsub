@@ -1,7 +1,7 @@
 package com.telecom.pubsub.alert.service;
 
 import com.telecom.pubsub.common.event.UsageAlertEvent;
-import com.telecom.pubsub.common.model.NotificationHistory;
+import com.telecom.pubsub.alert.model.NotificationHistory;
 import com.telecom.pubsub.alert.repository.NotificationRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

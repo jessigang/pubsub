@@ -32,8 +32,3 @@ logging:
   level:
     com.telecom.alert: ${LOG_LEVEL:DEBUG}
     org.springframework.web: INFO
-
-event-grid:
-  endpoint: ${EVENT_GRID_ENDPOINT}
-  key: ${EVENT_GRID_KEY}
-  topic: ${EVENT_GRID_TOPIC}

@@ -22,6 +22,7 @@ public class UsageEventService {
 
     public void publishUsageEvent(String userId, double usage, double threshold) {
         try {
+            log.info("## make event object");
             UsageAlertEvent event = UsageAlertEvent.builder()
                 .eventId(UUID.randomUUID().toString())
                 .type("UsageAlert")
@@ -31,9 +32,11 @@ public class UsageEventService {
                 .timestamp(LocalDateTime.now().format(DateTimeFormatter.ISO_DATE_TIME))
                 .build();
 
+            log.info("## generate event data");
             String eventData = objectMapper.writeValueAsString(event);
 
             //subject, eventType, data, dataVersion
+            log.info("## subject, eventType, data, dataVersion");
             EventGridEvent gridEvent = new EventGridEvent(
                     "phones/usages",
                     "UsageAlert",
@@ -41,6 +44,7 @@ public class UsageEventService {
                     "1.0"
             );
 
+            log.info("## try to send event");
             eventGridClient.sendEvent(gridEvent);
             log.info("Usage event published for user: {}", userId);
 
