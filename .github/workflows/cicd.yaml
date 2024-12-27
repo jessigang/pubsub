@@ -1,6 +1,5 @@
 name: CI/CD Pipeline
 
-
 on:
   push:
     branches: [ main ]
@@ -135,6 +134,7 @@ jobs:
           
           # Generate deployment file from template
           envsubst < deployment/deploy.yaml.template > deployment/deploy.yaml
+          cat deployment/deploy.yaml
 
       - name: Deploy to AKS
         run: |
