@@ -2,36 +2,34 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ main ]
 
 env:
-  # Application Settings
-  APPLICATION_NAME: pubsub
+  # Azure 설정
   RESOURCE_GROUP: tiu-dgga-rg
   LOCATION: koreacentral
+  TEAM_ID: unicorn
 
-  # Team Settings
-  TEAMID: unicorn
-  NAMESPACE: unicorn-pubsub-ns
-
-  # Container Registry Settings
+  # Container Registry 설정
   REGISTRY: unicorncr.azurecr.io
   IMAGE_ORG: telecom
 
-  # Resource Settings
+  # 리소스 설정
+  NAMESPACE: unicorn-pubsub-ns
   RESOURCES_REQUESTS_CPU: 250m
   RESOURCES_REQUESTS_MEMORY: 512Mi
   RESOURCES_LIMITS_CPU: 500m
   RESOURCES_LIMITS_MEMORY: 1024Mi
 
 jobs:
-  build-and-deploy:
+  build:
+    name: Build Services
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v3
@@ -42,76 +40,106 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Generate Image Tag
-        id: tag
+      - name: Build Alert Service
         run: |
-          echo "TAG=$(date +'%Y%m%d%H%M%S')" >> $GITHUB_ENV
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+          chmod +x gradlew
+          ./gradlew alert:clean alert:build -x test
 
       - name: Build Usage Service
-        run: ./gradlew usage:clean usage:build -x test
+        run: |
+          ./gradlew usage:clean usage:build -x test
 
-      - name: Build Alert Service
-        run: ./gradlew alert:clean alert:build -x test
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-artifacts
+          path: |
+            alert/build/libs/*.jar
+            usage/build/libs/*.jar
 
-      - name: Log in to Azure
+  release:
+    name: Build and Push Images
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: build-artifacts
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Get current timestamp
+        id: timestamp
+        run: echo "::set-output name=value::$(date +'%Y%m%d%H%M%S')"
+
+      - name: Build and push Alert image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deployment/Dockerfile-alert
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:${{ steps.timestamp.outputs.value }}
+
+      - name: Build and push Usage image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deployment/Dockerfile-usage
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:${{ steps.timestamp.outputs.value }}
+
+  deploy:
+    name: Deploy to AKS
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Log in to ACR
-        run: |
-          az acr login --name ${{ env.TEAMID }}cr
-
-      - name: Build and Push Usage Service Image
-        run: |
-          docker build -f deployment/Dockerfile-usage \
-            -t ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:${{ env.TAG }} \
-            -t ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:latest .
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:${{ env.TAG }}
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:latest
-
-      - name: Build and Push Alert Service Image
-        run: |
-          docker build -f deployment/Dockerfile-alert \
-            -t ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:${{ env.TAG }} \
-            -t ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:latest .
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:${{ env.TAG }}
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:latest
-
-      - name: Set up kubectl
+      - name: Get AKS Credentials
         uses: azure/aks-set-context@v3
         with:
           resource-group: ${{ env.RESOURCE_GROUP }}
-          cluster-name: ${{ env.TEAMID }}-aks
+          cluster-name: ${{ env.TEAM_ID }}-aks
 
-      - name: Create namespace if not exists
+      - name: Create namespace
         run: |
           kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Generate deployment manifest
         run: |
-          # Export variables for envsubst
-          export namespace=${{ env.NAMESPACE }}
-          export usage_image_path=${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:${{ env.TAG }}
-          export alert_image_path=${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:${{ env.TAG }}
-          export resources_requests_cpu=${{ env.RESOURCES_REQUESTS_CPU }}
-          export resources_requests_memory=${{ env.RESOURCES_REQUESTS_MEMORY }}
-          export resources_limits_cpu=${{ env.RESOURCES_LIMITS_CPU }}
-          export resources_limits_memory=${{ env.RESOURCES_LIMITS_MEMORY }}
+          export usage_image_path="${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/usage:${{ steps.timestamp.outputs.value }}"
+          export alert_image_path="${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/alert:${{ steps.timestamp.outputs.value }}"
           
-          # Install envsubst
-          sudo apt-get update && sudo apt-get install -y gettext-base
-          
-          # Generate deployment file
+          # Generate deployment file from template
           envsubst < deployment/deploy.yaml.template > deployment/deploy.yaml
 
       - name: Deploy to AKS
         run: |
           kubectl apply -f deployment/deploy.yaml
           
+          # Wait for pods to be ready
           echo "Waiting for Usage service pods..."
           kubectl wait --for=condition=ready pod -l "app=usage" -n ${{ env.NAMESPACE }} --timeout=300s
           
