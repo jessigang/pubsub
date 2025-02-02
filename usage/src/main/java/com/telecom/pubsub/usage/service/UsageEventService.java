@@ -34,6 +34,7 @@ public class UsageEventService {
 
             log.info("## generate event data");
             String eventData = objectMapper.writeValueAsString(event);
+            log.info("event data: {}", eventData);
 
             //subject, eventType, data, dataVersion
             log.info("## subject, eventType, data, dataVersion");

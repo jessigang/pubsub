@@ -18,22 +18,16 @@ public class EventGridConfig {
     @Value("${azure.eventgrid.key}")
     private String key;
 
+    @Value("${azure.eventgrid.topic}")
+    private String topicName;
+
     @Bean
     public EventGridPublisherClient eventGridPublisherClient() {
-        // 엔드포인트 정리 - 불필요한 특수문자 제거 및 URL 정규화
-        String cleanEndpoint = endpoint.trim()
-                .replaceAll("[\r\n\t]", "")  // 캐리지 리턴, 뉴라인, 탭 제거
-                .replaceAll("\\s+", "");     // 모든 공백 제거
-
-        // URL이 api/events로 끝나는지 확인 및 수정
-        if (!cleanEndpoint.endsWith("/api/events")) {
-            cleanEndpoint = cleanEndpoint.replaceAll("/+$", "") + "/api/events";
-        }
-
-        log.info("### Event Grid endpoint: {}", cleanEndpoint);
+        log.info("Initializing Event Grid client for topic: {}", topicName);
+        log.info("### Event Grid endpoint: {}", endpoint);
 
         return new EventGridPublisherClientBuilder()
-                .endpoint(cleanEndpoint)
+                .endpoint(endpoint)
                 .credential(new AzureKeyCredential(key))
                 .buildEventGridEventPublisherClient();
     }

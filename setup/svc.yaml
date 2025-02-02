@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: alert-svc
-  namespace: crew120-pubsub-ns
+  name: sms
+  namespace: dg0100-pubsub-ns
 spec:
   allocateLoadBalancerNodePorts: true
   externalTrafficPolicy: Cluster
@@ -13,7 +13,30 @@ spec:
   ports:
     - port: 80
       protocol: TCP
-      targetPort: 8082
+      targetPort: 8080
+  selector:
+    app: async
+  sessionAffinity: None
+  type: LoadBalancer
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: push
+  namespace: dg0100-pubsub-ns
+spec:
+  allocateLoadBalancerNodePorts: true
+  externalTrafficPolicy: Cluster
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - port: 80
+      protocol: TCP
+      targetPort: 8080
   selector:
     app: async
   sessionAffinity: None

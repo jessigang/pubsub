@@ -1,12 +1,17 @@
 spring:
   application:
-    name: publisher
+    name: usage-service
     
 azure:
   eventgrid:
     endpoint: ${EVENT_GRID_ENDPOINT}
     key: ${EVENT_GRID_KEY}
-    topic-name: ${EVENT_GRID_TOPIC}
+    topic: ${EVENT_GRID_TOPIC}
+    subscribers:
+      - name: sms-service
+        endpoint: ${SMS_SERVICE_ENDPOINT:https://sms-service/api/events/usage}
+      - name: push-service
+        endpoint: ${PUSH_SERVICE_ENDPOINT:https://push-service/api/events/usage}
 
 server:
   port: ${SERVER_PORT:8080}
