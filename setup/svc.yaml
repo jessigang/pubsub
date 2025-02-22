@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: sms
-  namespace: dg0100-pubsub-ns
+  namespace: dg0200-pubsub-ns
 spec:
   allocateLoadBalancerNodePorts: true
   externalTrafficPolicy: Cluster

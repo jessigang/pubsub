@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SHARED_PREFIX="dg0100"  #실습 시 tiu-dgga로 변경 
+RESOURCE_GROUP="ictcoe-edu" #az group list -o table
 
 # ===========================================
 # Pub-Sub Pattern 실습환경 정리 스크립트
@@ -37,7 +37,6 @@ setup_environment() {
 	USERID=$1
 	NAME="${USERID}-pubsub"
 	NAMESPACE="${NAME}-ns"
-	RESOURCE_GROUP="${SHARED_PREFIX}-rg"
 
 	# Event Grid 관련
 	EG_TOPIC="$NAME-topic"
